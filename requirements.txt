@@ -1,0 +1,12 @@
+streamlit
+pandas
+matplotlib
+textblob
+wordcloud
+google-api-python-client
+google-generativeai
+youtube-transcript-api
+emoji
+st-copy-to-clipboard
+scikit-learn
+elevenlabs

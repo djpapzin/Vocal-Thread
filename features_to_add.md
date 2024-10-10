@@ -1,0 +1,11 @@
+- [ ] Add a feature where the user can select the language in which they want to listen to the comments.
+- [ ] Add error handling for invalid links.
+- [ ] Modify Chat with comments to work accurately (create embeddings using the 004 model from Gemini).
+- [ ] Remove the warning "This video is not a live stream or does not have an active live chat." when there's no active live chat.
+- [ ] Integaret ElevenLabs TTS to the follwoing main features:
+  - [ ] Keep: `def summarize_comments(comments)` (Comments Summary)
+  - [ ] Keep: `def in_depth_analysis(comments)` (In-Depth Analysis (Gemini Pro Exp))
+  - [ ] Keep: `def generate_video_summary(...)` (Video Summary (Gemini Pro Exp))
+  - [ ] Keep: `def chat_with_comments(df, question, video_id=None)` (Chat with Comments (Gemini Pro Exp))
+- [ ] Next JS for FrontEnd
+- [ ] Make it into a mobile app/Chrome extension.
