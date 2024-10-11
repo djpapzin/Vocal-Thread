@@ -22,6 +22,9 @@ import json
 from PIL import Image
 import base64
 
+# Configure logging for elevenlabs to WARNING or higher
+logging.getLogger("elevenlabs").setLevel(logging.WARNING)  # Or logging.ERROR, logging.CRITICAL
+
 st.set_page_config(page_title="Vocal Thread: Where Comments Become Conversations", page_icon="logo.jpeg") # Set page title and favicon
 
 
@@ -34,7 +37,7 @@ elevenlabs_api_key = st.secrets["general"]["ELEVENLABS_API_KEY"]
 
 # Get available voices and select the first one as default
 try:
-    client = elevenlabs.ElevenLabs(api_key=elevenlabs_api_key)
+    client = elevenlabs.ElevenLabs(api_key=elevenlabs_api_key, timeout=300)
     voices = client.voices.get_all().voices
     default_voice = voices[0].voice_id if voices else None
 
@@ -60,33 +63,57 @@ except Exception as e:
     default_voice = None
 
 # Function to generate audio using ElevenLabs
-def generate_audio(text):
+def generate_audio(text, timeout=60):  # Add timeout parameter with a default value
     try:
-        print("Starting audio generation...")  # Print statement for debugging
         audio_generator = client.generate(text=text, voice=default_voice)
         audio_bytes = b"".join(list(audio_generator))
-        print("Audio generation complete.")  # Confirmation print
         return audio_bytes
-    except Exception as e:  # Catch ElevenLabs specific errors
-        if "Network" in str(e) or "Connection" in str(e):  # Check for network-related errors
-            logging.error(f"Network error during audio generation: {e}")
-            st.error("A network error occurred. Please check your internet connection.")
-            print(f"Network Error: {e}") # Print the error for debugging
-        else:  # Handle other ElevenLabs API errors
-            logging.error(f"ElevenLabs API error: {e}")
+
+    except Exception as e:
+        if "timeout" in str(e).lower() and len(text) > 2000: # Check for timeout and text length
+            logging.warning(f"Switching to longer timeout method for text (length: {len(text)})")
+            return generate_audio_long_text(text) # Call the new function for long texts
+        else:
+            logging.exception(f"Error generating audio for text '{text[:50]}...': {e}")
             st.error(f"An error occurred during audio generation: {e}")
-            print(f"ElevenLabs API Error: {e}") # Print the error for debugging
+            return None
+
+def generate_audio_long_text(text, timeout=300):
+    headers = {
+        "xi-api-key": elevenlabs_api_key,
+        "Content-Type": "application/json",
+    }
+    data = {
+        "text": text,
+        "voice_settings": {
+            "stability": 0,
+            "similarity_boost": 0,
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{default_voice}",
+            headers=headers,
+            json=data,
+            timeout=timeout, # Set the longer timeout here
+            stream=True, # Important for handling large audio files
+        )
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+
+        audio_bytes = b""
+        for chunk in response.iter_content(chunk_size=8192): # Stream the response in chunks
+            audio_bytes += chunk
+        return audio_bytes
+
+    except requests.exceptions.Timeout as e:
+        logging.error(f"Timeout error generating audio for long text: {e}")
+        st.error("The audio generation timed out. The text might be too long. Please try a shorter text or contact support.")
         return None
-    except Exception as e:  # Catch general exceptions
-        logging.exception(f"An unexpected error occurred: {e}") # Log the full traceback
-        st.error("An unexpected error occurred during audio generation.")
-        print(f"Unexpected Error: {e}") # Print the error for debugging
+    except requests.exceptions.RequestException as e:
+        logging.exception(f"Error generating audio for long text: {e}")
+        st.error(f"An error occurred during audio generation: {e}")
         return None
-
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configure Gemini
 genai.configure(api_key=gemini_api_key)
@@ -493,7 +520,9 @@ def analyze_comments(df, video_id):
             in_depth_analysis_text, audio_bytes = generate_in_depth_analysis(df["Comment"].tolist())
             st.write(in_depth_analysis_text)
             if audio_bytes:
-                st.audio(audio_bytes, format="audio/mpeg")  # Display audio player
+                st.audio(audio_bytes, format="audio/mpeg")
+                
+            st.write(in_depth_analysis_text)# Display audio player
             st_copy_to_clipboard(in_depth_analysis_text, key="in_depth_analysis_copy_button") # Copy the text
 
         except Exception as e:
@@ -656,8 +685,8 @@ if st.button("Scrutinize Comments"):
                 with st.expander("Comments Summary", expanded=True):
                     summary, audio_bytes = summarize_comments(df["Comment"].tolist())
                     try:
-                        if summary:  # This check is now always safe
-                            if audio_bytes:  # Check if audio generation was successful - NOW AT THE TOP
+                        if summary:  # Check if summary was generated successfully
+                            if audio_bytes:
                                 st.audio(audio_bytes, format="audio/mpeg")
 
                             sentiment = analyze_sentiment(summary)
@@ -666,6 +695,9 @@ if st.button("Scrutinize Comments"):
                                 else ":thumbs_down:" if sentiment == "Negative"
                                 else ":neutral_face:"
                             )
+
+                            st.markdown(f"{emoji_for_sentiment} {summary}") # Use st.markdown and combine emoji and summary
+
                             summary_with_emoji = f"{emoji_for_sentiment} {summary}"
                             st.write(summary_with_emoji)  # Display the summary with emoji
 
