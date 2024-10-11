@@ -22,7 +22,7 @@ import json
 from PIL import Image
 import base64
 
-st.set_page_config(page_title="Vocal Thread: Powered by Gemini AI", page_icon="logo.jpeg") # Set page title and favicon
+st.set_page_config(page_title="Vocal Thread: Where Comments Become Conversations", page_icon="logo.jpeg") # Set page title and favicon
 
 
 # Load API keys from Streamlit secrets
@@ -58,6 +58,31 @@ try:
 except Exception as e:
     st.error(f"Error initializing ElevenLabs: {e}")
     default_voice = None
+
+# Function to generate audio using ElevenLabs
+def generate_audio(text):
+    try:
+        print("Starting audio generation...")  # Print statement for debugging
+        audio_generator = client.generate(text=text, voice=default_voice)
+        audio_bytes = b"".join(list(audio_generator))
+        print("Audio generation complete.")  # Confirmation print
+        return audio_bytes
+    except Exception as e:  # Catch ElevenLabs specific errors
+        if "Network" in str(e) or "Connection" in str(e):  # Check for network-related errors
+            logging.error(f"Network error during audio generation: {e}")
+            st.error("A network error occurred. Please check your internet connection.")
+            print(f"Network Error: {e}") # Print the error for debugging
+        else:  # Handle other ElevenLabs API errors
+            logging.error(f"ElevenLabs API error: {e}")
+            st.error(f"An error occurred during audio generation: {e}")
+            print(f"ElevenLabs API Error: {e}") # Print the error for debugging
+        return None
+    except Exception as e:  # Catch general exceptions
+        logging.exception(f"An unexpected error occurred: {e}") # Log the full traceback
+        st.error("An unexpected error occurred during audio generation.")
+        print(f"Unexpected Error: {e}") # Print the error for debugging
+        return None
+
 
 
 # Configure logging
@@ -294,11 +319,13 @@ def in_depth_analysis(comments):
     prompt = f"Provide an in-depth analysis of the following YouTube comment threads, focusing on the overall sentiment, key themes and topics, and any interesting patterns or insights you can identify:\n\n{all_comments}"
     try:
         response = gemini_pro_exp_chat_session.send_message(prompt)
-        return response.text.strip()
+        analysis_text = response.text.strip()  # Get the text
+        audio_bytes = generate_audio(analysis_text)  # Generate audio
+        return analysis_text, audio_bytes  # Return both
     except Exception as e:
         logging.error(f"Error performing in-depth analysis: {e}")
-        st.error(f"Error performing in-depth analysis: {e}")  # Display error message to the user
-        return "Error performing in-depth analysis. Please try again later."
+        st.error(f"Error performing in-depth analysis: {e}")
+        return "Error performing in-depth analysis. Please try again later.", None # Return None for audio
 
 # Function to perform comparative analysis
 def comparative_analysis(dfs, video_ids):
@@ -315,10 +342,11 @@ def comparative_analysis(dfs, video_ids):
     try:
         response = gemini_pro_exp_chat_session.send_message(prompt)
         return response.text.strip()
-    except Exception as e:
+    except Exception as e:  # Added except block to handle potential errors
         logging.error(f"Error performing comparative analysis: {e}")
-        return "Error performing comparative analysis."
-
+        st.error(f"Error performing comparative analysis: {e}") # Display error in Streamlit
+        return "Error performing comparative analysis." # Return a message to the user
+    
 # Function to generate video summary
 def generate_video_summary(youtube_api_key, video_id, comments):
     try:
@@ -362,12 +390,17 @@ def generate_video_summary(youtube_api_key, video_id, comments):
         """
 
         response = gemini_pro_exp_chat_session.send_message(prompt)
-        return response.text.strip()
+        summary = response.text.strip()
+        audio_bytes = generate_audio(summary)  # Generate audio
+        if audio_bytes is None:  # Check if audio generation failed
+            return "Error generating audio for summary.", None  # Handle the error appropriately
 
-    except Exception as e:
+        return summary, audio_bytes  # Return both text and audio
+    
+    except Exception as e: # This is the missing except block for the outer try
         logging.error(f"Error generating video summary: {e}")
         st.error(f"Error generating video summary: {e}")  # Display the error to the user
-        return "Error generating video summary."
+        return "Error generating video summary.", None # Return None for audio in case of an error
 
 
 def chat_with_comments(df, question, chat_history, top_n=3):  # Add chat_history, top_n
@@ -433,7 +466,10 @@ def generate_in_depth_analysis(comments):
     """
 
     response = gemini_pro_exp_chat_session.send_message(prompt)
-    return response.text
+    analysis_text = response.text.strip()
+    audio_bytes = generate_audio(analysis_text)  # Generate audio
+    return analysis_text, audio_bytes  # Return both
+
 
 # --- Function to perform common analysis tasks ---
 def analyze_comments(df, video_id):
@@ -454,19 +490,21 @@ def analyze_comments(df, video_id):
     # In-Depth Analysis with Gemini Pro Exp
     with st.expander("In-Depth Analysis (Gemini Pro Exp)", expanded=False):
         try:
-            in_depth_analysis = generate_in_depth_analysis(df["Comment"].tolist())
-            st.write(in_depth_analysis)
-
-            # Add copy button
-            st_copy_to_clipboard(in_depth_analysis, key="in_depth_analysis_copy_button")
+            in_depth_analysis_text, audio_bytes = generate_in_depth_analysis(df["Comment"].tolist())
+            st.write(in_depth_analysis_text)
+            if audio_bytes:
+                st.audio(audio_bytes, format="audio/mpeg")  # Display audio player
+            st_copy_to_clipboard(in_depth_analysis_text, key="in_depth_analysis_copy_button") # Copy the text
 
         except Exception as e:
             st.error(f"Error generating in-depth analysis: {e}")
 
     # Video Summary
     with st.expander("Video Summary (Gemini Pro Exp)", expanded=False):
-        summary = generate_video_summary(youtube_api_key, video_id, df["Comment"].tolist())
-        st.write(summary)
+        summary, audio_bytes = generate_video_summary(youtube_api_key, video_id, df["Comment"].tolist())
+        if audio_bytes:  # Check if audio was generated successfully
+            st.audio(audio_bytes, format="audio/mpeg")  # Display audio player first
+        st.write(summary)  # Then display the summary text
 
     # Chat with Comments (moved outside of any expander)
     st.subheader("Chat with Comments")
@@ -699,13 +737,15 @@ if trending_videos:
                 with st.expander("Comments Summary", expanded=True):
                     try:
                         summary = summarize_comments(df["Comment"].tolist())
-                        sentiment = analyze_sentiment(summary)  # Analyze sentiment of the summary
+                        sentiment = analyze_sentiment(summary)
                         emoji_for_sentiment = emoji.emojize(
                             ":thumbs_up:" if sentiment == "Positive"
                             else ":thumbs_down:" if sentiment == "Negative"
                             else ":neutral_face:"
                         )
-                        st.write(f"{emoji_for_sentiment} {summary}")  # Add emoji to the summary
+
+                        st.write(emoji_for_sentiment, unsafe_allow_html=True) # Display emoji separately
+                        st.markdown(f"## {summary}")  # Use st.markdown for the heading
                     except Exception as e:
                         st.error(f"Error summarizing comments: {e}")
 
